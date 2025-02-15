@@ -1,109 +1,85 @@
-import e from 'express'
-import crypto from 'crypto'
-
-type AuthHandler = ({
-    token,
-    session,
-}: {
-    token: string
-    session: lancerTypes.SessionRequest
-}) => Promise<{ ownerId: string; status: number }>
-
-type WebHookHandler = ({
-    event,
-    payload,
-}: {
-    event: lancerTypes.Event
-    payload: lancerTypes.WebhookEvent<lancerTypes.Session | lancerTypes.UFile>
-}) => Promise<boolean>
-
-function verifySignature(
-    payload: string,
-    timestamp: string,
-    signature: string,
-    secret: string,
-) {
-    const message = `${timestamp}.${payload}`
-    const hmac = crypto.createHmac('sha256', secret)
-    hmac.update(message)
-    const expectedSignature = hmac.digest('hex')
-    return crypto.timingSafeEqual(
-        Buffer.from(signature),
-        Buffer.from(expectedSignature),
-    )
+interface CreateSessionOption {
+    baseChunkSize: number
+    authToken: string
+    provider: lancerTypes.Providers
 }
 
-function lancer({ signingSecret }: { signingSecret: string }) {
-    function auth(handler: AuthHandler) {
-        return async (
-            req: e.Request,
-            res: e.Response,
-            next: e.NextFunction,
-        ) => {
-            const authHeader = req.headers?.authorization?.split(' ')[1]
-            if (!authHeader) {
-                return res.status(403).send()
-            }
-            const body = req.body as lancerTypes.SessionRequest
+interface CreateSessionResult {
+    sessionToken: string
+    file: File
+    chunkSize: number
+}
 
-            if (
-                body.chunk_size &&
-                body.file_name &&
-                body.file_size &&
-                body.max_chunk &&
-                // body.mime_type &&
-                body.provider
-            ) {
-                const ack = await handler({ token: authHeader, session: body })
-                return res.status(ack.status).send({ ownerId: ack.ownerId })
-            } else {
-                return res.status(422).send()
-            }
+async function calculateChecksum(chunk: Blob) {
+    const buffer = await chunk.arrayBuffer()
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
+    const hashArray = Array.from(new Uint8Array(hashBuffer))
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+function lancer(serverUrl: string) {
+    const url = {
+        session: serverUrl + '/api/sessions',
+        upload: serverUrl + '/api/upload',
+    }
+    const createSession = async (file: File, option: CreateSessionOption) => {
+        const totalChunks = Math.ceil(file.size / option.baseChunkSize)
+        const payload = {
+            file_size: file.size,
+            file_name: file.name,
+            max_chunk: totalChunks,
+            chunk_size: option.baseChunkSize,
+            provider: option.provider,
         }
+        const res = await fetch(url.session, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            headers: {
+                'content-type': 'application/json',
+                authorization: 'Bearer ' + option.authToken,
+            },
+        })
+        if (res?.status >= 400) {
+            throw new Error(`${res.status}`)
+        }
+        const resBody = await res.json()
+        return {
+            ...resBody,
+            file,
+            chunkSize: option.baseChunkSize,
+        } as CreateSessionResult
     }
 
-    function webhook(handler: WebHookHandler, verification?: boolean) {
-        return async (
-            req: e.Request,
-            res: e.Response,
-            next: e.NextFunction,
-        ) => {
-            if (verification) {
-                const sig = req.headers['x-signature']
-                const timestamp = req.headers['x-timestamp']
-                if (sig && timestamp) {
-                    const body = JSON.stringify(req.body)
-                    const isVerified = verifySignature(
-                        body,
-                        timestamp as string,
-                        sig as string,
-                        signingSecret,
-                    )
-                    if (!isVerified) {
-                        return res.status(400).send()
-                    }
-                } else {
-                    return res.status(400).send()
-                }
-            }
-            const ack = await handler({
-                event: req.body.event,
-                payload: req.body.data,
+    const uploadFile = async (option: CreateSessionResult) => {
+        const chunks = []
+        let start = 0
+        while (start < option.file.size) {
+            const end = Math.min(start + option.chunkSize, option.file.size)
+            chunks.push({ start, end })
+            start = end
+        }
+
+        for (let i = 0; i < chunks.length; i++) {
+            const { start, end } = chunks[i]
+            const chunk = option.file.slice(start, end)
+            const checksum = await calculateChecksum(chunk)
+            const formData = new FormData()
+            formData.append('checksum', checksum)
+            formData.append('chunk', i + 1)
+            formData.append('file', chunk)
+
+            const response = await fetch(url.upload, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'content-type': 'multipart/form-data',
+                    'x-session-token': option.sessionToken,
+                },
             })
-            if (ack) {
-                res.status(200).send()
-                return
-            } else {
-                res.status(400).send()
-                return
-            }
+            const resBody =  await response.json()
+            if(response.status >= 400){
+                throw new Error(`${response?.status}`)
+            }                
         }
     }
-
-    return {
-        auth,
-        webhook,
-    }
 }
-
-export default lancer
