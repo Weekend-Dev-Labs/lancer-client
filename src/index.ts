@@ -8,16 +8,42 @@ interface CreateSessionResult {
     sessionToken: string
     file: File
     chunkSize: number
+    max_chunk: number
+}
+
+interface UploadPartResult {
+    serverChecksum: string
+    chunk: number
+    remainingChunk: number
+    isUploadCompleted: boolean
+}
+interface UploadFinalResult {
+    remainingChunk: number
+    isUploadCompleted: boolean
+    uploadId: number
+    file: lancerTypes.UFile
+}
+
+export class LancerUploadStopError extends Error {
+    constructor(message: string) {
+        super(message)
+    }
+}
+
+interface OptionUpload {
+    onPartUpload: (data: UploadPartResult) => Promise<boolean>
+    onCompeteUpload: (data: UploadFinalResult) => Promise<boolean>
 }
 
 async function calculateChecksum(chunk: Blob) {
     const buffer = await chunk.arrayBuffer()
     const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
     const hashArray = Array.from(new Uint8Array(hashBuffer))
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+    return hashHex
 }
 
-function lancer(serverUrl: string) {
+export function lancer(serverUrl: string) {
     const url = {
         session: serverUrl + '/api/sessions',
         upload: serverUrl + '/api/upload',
@@ -46,11 +72,15 @@ function lancer(serverUrl: string) {
         return {
             ...resBody,
             file,
+            max_chunk: payload.max_chunk,
             chunkSize: option.baseChunkSize,
         } as CreateSessionResult
     }
 
-    const uploadFile = async (option: CreateSessionResult) => {
+    const uploadFile = async (
+        option: CreateSessionResult,
+        uploadOption: OptionUpload,
+    ) => {
         const chunks = []
         let start = 0
         while (start < option.file.size) {
@@ -65,21 +95,32 @@ function lancer(serverUrl: string) {
             const checksum = await calculateChecksum(chunk)
             const formData = new FormData()
             formData.append('checksum', checksum)
-            formData.append('chunk', i + 1)
+            formData.append('chunk', `${i + 1}`)
             formData.append('file', chunk)
 
             const response = await fetch(url.upload, {
                 method: 'POST',
                 body: formData,
                 headers: {
-                    'content-type': 'multipart/form-data',
                     'x-session-token': option.sessionToken,
                 },
             })
-            const resBody =  await response.json()
-            if(response.status >= 400){
+            if (response.status >= 400) {
                 throw new Error(`${response?.status}`)
-            }                
+            }
+            const resBody = await response.json()
+            if (option.max_chunk > i + 1) {
+                const ack = await uploadOption.onPartUpload(resBody)
+                if (!ack) {
+                    throw new LancerUploadStopError(
+                        'onPartUpload return false ',
+                    )
+                }
+            } else if (option.max_chunk === i + 1) {
+                const ack = await uploadOption.onCompeteUpload(resBody)
+                return resBody
+            }
         }
     }
+    return { url, createSession, uploadFile }
 }
