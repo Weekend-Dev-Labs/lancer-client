@@ -1,66 +1,155 @@
-https://user-images.githubusercontent.com/24322511/235310539-8f96addb-3e87-449f-9579-4ca0bab7cf66.mp4
+# @lancer/client
 
-<p align="center"><strong>( रूप ) — An opinionated 🎽 formatter for commander.js with ✨ colored output.</strong></p>
-<p align="center">
-    <a target="_blank" rel="noopener" href="https://www.npmjs.com/package/rupa">
-        <img src="https://img.shields.io/npm/v/rupa.svg?style=flat-square" alt="version">
-    </a>
-    <a target="_blank" rel="noopener" href="https://www.npmjs.com/package/rupa?activeTab=versions">
-        <img src="https://img.shields.io/npm/dm/rupa.svg?style=flat-square" alt="downloads">
-    </a>
-    <a href="https://github.com/vsnthdev/rupa/issues">
-        <img src="https://img.shields.io/github/issues/vsnthdev/rupa.svg?style=flat-square" alt="issues">
-    </a>
-    <a href="https://github.com/vsnthdev/rupa/commits/main">
-        <img src="https://img.shields.io/github/last-commit/vsnthdev/rupa.svg?style=flat-square"
-            alt="commits">
-    </a>
-</p>
-<br>
+**Lancer Upload SDK**
 
-<!-- longer description -->
+---
 
-> Tweet to <a target="_blank" rel="noopener" href="https://vas.cx/twitter">@vsnthdev</a>, I'd love to know your opinion & feedback on this project 🤩
+## **Overview**
 
-## ✨ Features
+@lancer/upload is the official client-side SDK for handling file uploads with Lancer. It provides efficient session management, chunked file uploads, and upload lifecycle events, making large file uploads seamless and reliable.
 
-- [x] 👌 Written in TypeScript
-- [x] ⚡️ Absolutely easy to use
+---
 
-## 💿 Installation
+## **Features**
 
-<a href="https://www.npmjs.com/package/rupa"><img src="https://nodei.co/npm/rupa.png?downloads=true&downloadRank=true&stars=true" alt="npm module badge"></a>
+- **Session Management**: Create upload sessions for large files.
+- **Chunked Uploading**: Split and upload files in chunks to handle large files efficiently.
+- **Event Hooks**: Customize upload behavior with part and completion callbacks.
+
+---
+
+## **Installation**
+
+Install the SDK via npm:
+
 ```bash
-pnpm add rupa # or "npm i rupa" 
+npm install @lancer/client
 ```
 
-## 💻 Building & Dev Setup
+---
 
-You need to be at least on **Node.js v17 or above** and follow the below instructions to build the project 👇
+## **Getting Started**
 
-- **STEP 1️⃣**  Clone this project
-- **STEP 2️⃣**  Run **`pnpm i`** to install all dependencies
-- **STEP 3️⃣**  To build the TypeScript project run **`pnpm run build`**
+### **1. Initialize the Lancer Uploader**
 
-Now you should have a `dist` folder in the project directory.
+Create an instance of the `lancer` function with your server URL for managing file upload sessions and chunks.
 
-### ⚡ Running Examples
+```typescript
+import { lancer } from "@lancer/client";
 
-Once you have successfully built the project, to run a basic example 👇
-
-```
-node examples/index.js
+const lancerClient = lancer("<your-server-url>");
 ```
 
-### 🛠️ Writing Code
+| Parameter   | Type     | Required | Description              |
+|-------------|----------|----------|--------------------------|
+| serverUrl   | string   | Yes      | URL of your upload server |
 
-This project follows [Vasanth's Commit Style](https://vas.cx/commits) for commit messages.
+---
 
-## 📰 License
-> The **rupa** project is released under the [MIT license](https://github.com/vsnthdev/rupa/blob/main/LICENSE.md). <br> Developed &amp; maintained By Vasanth Srivatsa. Copyright 2023 © Vasanth Developer.
-<hr>
+### **2. Create an Upload Session**
 
-> <a href="https://vsnth.dev" target="_blank" rel="noopener">vsnth.dev</a> &nbsp;&middot;&nbsp;
-> YouTube <a href="https://vas.cx/videos" target="_blank" rel="noopener">@vsnthdev</a> &nbsp;&middot;&nbsp;
-> Twitter <a href="https://vas.cx/twitter" target="_blank" rel="noopener">@vsnthdev</a> &nbsp;&middot;&nbsp;
-> Discord <a href="https://vas.cx/discord" target="_blank" rel="noopener">Vasanth Developer</a>
+Use the `createSession` method to start an upload session for a file.
+
+```typescript
+const session = await lancerClient.createSession(file, {
+  baseChunkSize: 1024 * 1024, // 1MB chunks
+  authToken: "<your-auth-token>",
+  provider: "AWS", // Storage provider
+});
+```
+
+| Parameter      | Type     | Required | Description                    |
+|----------------|----------|----------|--------------------------------|
+| file           | File     | Yes      | File object to be uploaded     |
+| baseChunkSize  | number   | Yes      | Size of each file chunk (bytes) |
+| authToken      | string   | Yes      | Authorization token            |
+| provider       | string   | Yes      | Storage provider name          |
+
+**Response:**
+
+```json
+{
+  "sessionToken": "abc123",
+  "file": {},
+  "chunkSize": 1048576,
+  "max_chunk": 10
+}
+```
+
+---
+
+### **3. Upload the File**
+
+Use the `uploadFile` method to upload file chunks.
+
+```typescript
+await lancerClient.uploadFile(session, {
+  onPartUpload: async (data) => {
+    console.log("Chunk uploaded:", data);
+    return true; // Continue upload
+  },
+  onCompeteUpload: async (data) => {
+    console.log("Upload completed:", data);
+    return true;
+  },
+});
+```
+
+| Parameter        | Type       | Required | Description                        |
+|------------------|------------|----------|------------------------------------|
+| session          | object     | Yes      | Upload session object              |
+| onPartUpload     | function   | Yes      | Callback for each chunk upload     |
+| onCompeteUpload  | function   | Yes      | Callback for upload completion     |
+
+**Chunk Upload Response:**
+
+```json
+{
+  "serverChecksum": "abc123",
+  "chunk": 1,
+  "remainingChunk": 9,
+  "isUploadCompleted": false
+}
+```
+
+**Final Upload Response:**
+
+```json
+{
+  "remainingChunk": 0,
+  "isUploadCompleted": true,
+  "uploadId": 456,
+  "file": {}
+}
+```
+
+---
+
+## **Error Handling**
+
+The SDK throws a `LancerUploadStopError` if an upload is stopped by a callback returning `false`.
+
+```typescript
+try {
+  await lancerClient.uploadFile(session, uploadOptions);
+} catch (error) {
+  if (error instanceof LancerUploadStopError) {
+    console.error("Upload stopped:", error.message);
+  }
+}
+```
+
+---
+
+## **Security Best Practices**
+
+1. **Protect Your Auth Token**: Store your `authToken` securely in environment variables.
+2. **Verify Checksums**: Ensure server verifies chunk checksums.
+3. **Limit Upload Size**: Set appropriate file size limits on the server.
+
+---
+
+## **License**
+
+MIT License © 2025 Weekend Dev Labs
+
