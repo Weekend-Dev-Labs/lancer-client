@@ -1,4 +1,4 @@
-# @lancer/client
+# `lancer-client`
 
 **Lancer Upload SDK**
 
@@ -23,7 +23,7 @@
 Install the SDK via npm:
 
 ```bash
-npm install @lancer/client
+npm install lancer-client
 ```
 
 ---
@@ -35,7 +35,7 @@ npm install @lancer/client
 Create an instance of the `lancer` function with your server URL for managing file upload sessions and chunks.
 
 ```typescript
-import { lancer } from "@lancer/client";
+import { lancer } from "lancer-client";
 
 const lancerClient = lancer("<your-server-url>");
 ```

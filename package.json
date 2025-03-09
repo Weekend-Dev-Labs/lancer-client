@@ -1,5 +1,5 @@
 {
-    "name": "@lancer/client",
+    "name": "lancer-client",
     "description": "Lancer client sdk ",
     "version": "1.0.0",
     "license": "MIT",
